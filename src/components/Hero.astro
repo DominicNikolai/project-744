@@ -12,54 +12,56 @@
 </style>
 
 <script>
-import * as THREE from 'three';
-import GUI from 'lil-gui';
+  import * as THREE from 'three';
+  import GUI from 'lil-gui';
 
-// --- Setup Scene, Camera, Renderer ---
-const scene = new THREE.Scene();
+  // --- Setup Scene, Camera, Renderer ---
+  const scene = new THREE.Scene();
 
-// Orthographic camera for full-screen shader rendering
-const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  // Orthographic camera for full-screen shader rendering
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+  const renderer = new THREE.WebGLRenderer({ antialias: false });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-// --- GUI Parameters ---
-const params = {
-  dpr: 1.0,
-  animSpeed: -0.6,
-  flightPos: 2.6,
-  colorR: 0.1,
-  colorG: 0.6,
-  colorB: 1.2,
-  lightIntensity: 30000.0,
-  grainIntensity: 0.02
-};
+  // --- GUI Parameters ---
+  const params = {
+    dpr: 1.0,
+    animSpeed: -0.6,
+    flightPos: 2.6,
+    colorR: 0.1,
+    colorG: 0.6,
+    colorB: 1.2,
+    lightIntensity: 30000.0,
+    grainIntensity: 0.02
+  };
 
+  // Set initial DPR
+  renderer.setPixelRatio(params.dpr);
 
-// Set initial DPR
-renderer.setPixelRatio(params.dpr);
+  // --- Shader Material ---
+  const uniforms = {
+    iTime: { value: 0.0 },
+    iResolution: {
+      value: new THREE.Vector2(window.innerWidth, window.innerHeight)
+    },
+    uAnimSpeed: { value: params.animSpeed },
+    uFlightPos: { value: params.flightPos },
+    uColor: {
+      value: new THREE.Vector3(params.colorR, params.colorG, params.colorB)
+    },
+    uLightIntensity: { value: params.lightIntensity },
+    uGrainIntensity: { value: params.grainIntensity }
+  };
 
-// --- Shader Material ---
-const uniforms = {
-  iTime: { value: 0.0 },
-  iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-  uAnimSpeed: { value: params.animSpeed },
-  uFlightPos: { value: params.flightPos },
-  uColor: { value: new THREE.Vector3(params.colorR, params.colorG, params.colorB) },
-  uLightIntensity: { value: params.lightIntensity },
-  uGrainIntensity: { value: params.grainIntensity }
-};
-
-
-const vertexShader = `
+  const vertexShader = `
             void main() {
                 gl_Position = vec4(position, 1.0);
             }
         `;
 
-const fragmentShader = `
+  const fragmentShader = `
             uniform float iTime;
             uniform vec2 iResolution;
             
@@ -152,77 +154,113 @@ const fragmentShader = `
             }
         `;
 
-const material = new THREE.ShaderMaterial({
-  vertexShader,
-  fragmentShader,
-  uniforms
-});
+  const material = new THREE.ShaderMaterial({
+    vertexShader,
+    fragmentShader,
+    uniforms
+  });
 
+  // Fullscreen plane
+  const geometry = new THREE.PlaneGeometry(2, 2);
+  const mesh = new THREE.Mesh(geometry, material);
+  scene.add(mesh);
 
-// Fullscreen plane
-const geometry = new THREE.PlaneGeometry(2, 2);
-const mesh = new THREE.Mesh(geometry, material);
-scene.add(mesh);
+  // --- GUI Setup ---
+  const gui = new GUI({ title: 'Shader Settings' });
 
-// --- GUI Setup ---
-const gui = new GUI({ title: 'Shader Settings' });
+  gui
+    .add(params, 'dpr', 0.1, 4.0, 0.1)
+    .name('Resolution (DPR)')
+    .onChange((v: number) => {
+      renderer.setPixelRatio(v);
+      // Re-calc resolution uniform correctly after DPR change
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      uniforms.iResolution.value.set(
+        window.innerWidth * renderer.getPixelRatio(),
+        window.innerHeight * renderer.getPixelRatio()
+      );
+    });
 
-gui.add(params, 'dpr', 0.1, 4.0, 0.1).name('Resolution (DPR)').onChange((v: number) => {
-  renderer.setPixelRatio(v);
-  // Re-calc resolution uniform correctly after DPR change
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  const animFolder = gui.addFolder('Animation');
+  animFolder
+    .add(params, 'animSpeed', -5.0, 5.0, 0.1)
+    .name('Morph Speed')
+    .onChange((v: number) => {
+      uniforms.uAnimSpeed.value = v;
+    });
+  animFolder
+    .add(params, 'flightPos', -10.0, 10.0, 0.01)
+    .name('Flight Offset')
+    .onChange((v: number) => {
+      uniforms.uFlightPos.value = v;
+    });
+
+  const colorFolder = gui.addFolder('Color & Light');
+  colorFolder
+    .add(params, 'colorR', 0.0, 3.0, 0.01)
+    .name('Red Channel')
+    .onChange((v: number) => {
+      uniforms.uColor.value.x = v;
+    });
+  colorFolder
+    .add(params, 'colorG', 0.0, 3.0, 0.01)
+    .name('Green Channel')
+    .onChange((v: number) => {
+      uniforms.uColor.value.y = v;
+    });
+  colorFolder
+    .add(params, 'colorB', 0.0, 3.0, 0.01)
+    .name('Blue Channel')
+    .onChange((v: number) => {
+      uniforms.uColor.value.z = v;
+    });
+  colorFolder
+    .add(params, 'lightIntensity', 5000, 100000, 100)
+    .name('Light Accumulation')
+    .onChange((v: number) => {
+      uniforms.uLightIntensity.value = v;
+    });
+
+  const postFolder = gui.addFolder('Post Processing');
+  postFolder
+    .add(params, 'grainIntensity', 0.0, 0.5, 0.01)
+    .name('Grain Intensity')
+    .onChange((v: number) => {
+      uniforms.uGrainIntensity.value = v;
+    });
+
+  // Close GUI by default as requested
+  gui.close();
+
+  // --- Resize Handler ---
+  window.addEventListener('resize', () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    renderer.setSize(width, height);
+
+    // iResolution needs to account for DPR
+    const dpr = renderer.getPixelRatio();
+    uniforms.iResolution.value.set(width * dpr, height * dpr);
+  });
+
+  // Account for initial DPR in resolution
   uniforms.iResolution.value.set(
     window.innerWidth * renderer.getPixelRatio(),
     window.innerHeight * renderer.getPixelRatio()
   );
-});
 
-const animFolder = gui.addFolder('Animation');
-animFolder.add(params, 'animSpeed', -5.0, 5.0, 0.1).name('Morph Speed').onChange((v: number) => { uniforms.uAnimSpeed.value = v; });
-animFolder.add(params, 'flightPos', -10.0, 10.0, 0.01).name('Flight Offset').onChange((v: number) => { uniforms.uFlightPos.value = v; });
+  // --- Animation Loop ---
+  const timer = new THREE.Timer();
 
-const colorFolder = gui.addFolder('Color & Light');
-colorFolder.add(params, 'colorR', 0.0, 3.0, 0.01).name('Red Channel').onChange((v: number) => { uniforms.uColor.value.x = v; });
-colorFolder.add(params, 'colorG', 0.0, 3.0, 0.01).name('Green Channel').onChange((v: number) => { uniforms.uColor.value.y = v; });
-colorFolder.add(params, 'colorB', 0.0, 3.0, 0.01).name('Blue Channel').onChange((v: number) => { uniforms.uColor.value.z = v; });
-colorFolder.add(params, 'lightIntensity', 5000, 100000, 100).name('Light Accumulation').onChange((v: number) => { uniforms.uLightIntensity.value = v; });
+  function animate() {
+    requestAnimationFrame(animate);
 
-const postFolder = gui.addFolder('Post Processing');
-postFolder.add(params, 'grainIntensity', 0.0, 0.5, 0.01).name('Grain Intensity').onChange((v: number) => { uniforms.uGrainIntensity.value = v; });
+    timer.update();
+    uniforms.iTime.value = timer.getElapsed();
 
-// Close GUI by default as requested
-gui.close();
+    renderer.render(scene, camera);
+  }
 
-// --- Resize Handler ---
-window.addEventListener('resize', () => {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-
-  renderer.setSize(width, height);
-
-  // iResolution needs to account for DPR
-  const dpr = renderer.getPixelRatio();
-  uniforms.iResolution.value.set(width * dpr, height * dpr);
-});
-
-// Account for initial DPR in resolution
-uniforms.iResolution.value.set(
-  window.innerWidth * renderer.getPixelRatio(),
-  window.innerHeight * renderer.getPixelRatio()
-);
-
-
-// --- Animation Loop ---
-const timer = new THREE.Timer();
-
-function animate() {
-  requestAnimationFrame(animate);
-
-  timer.update();
-  uniforms.iTime.value = timer.getElapsed();
-
-  renderer.render(scene, camera);
-}
-
-animate();
+  animate();
 </script>
