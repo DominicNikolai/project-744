@@ -1,0 +1,228 @@
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+</style>
+
+<script>
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+
+// --- Setup Scene, Camera, Renderer ---
+const scene = new THREE.Scene();
+
+// Orthographic camera for full-screen shader rendering
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// --- GUI Parameters ---
+const params = {
+  dpr: 1.0,
+  animSpeed: -0.6,
+  flightPos: 2.6,
+  colorR: 0.1,
+  colorG: 0.6,
+  colorB: 1.2,
+  lightIntensity: 30000.0,
+  grainIntensity: 0.02
+};
+
+
+// Set initial DPR
+renderer.setPixelRatio(params.dpr);
+
+// --- Shader Material ---
+const uniforms = {
+  iTime: { value: 0.0 },
+  iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+  uAnimSpeed: { value: params.animSpeed },
+  uFlightPos: { value: params.flightPos },
+  uColor: { value: new THREE.Vector3(params.colorR, params.colorG, params.colorB) },
+  uLightIntensity: { value: params.lightIntensity },
+  uGrainIntensity: { value: params.grainIntensity }
+};
+
+
+const vertexShader = `
+            void main() {
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+const fragmentShader = `
+            uniform float iTime;
+            uniform vec2 iResolution;
+            
+            // GUI Uniforms
+            uniform float uAnimSpeed;
+            uniform float uFlightPos;
+            uniform vec3 uColor;
+            uniform float uLightIntensity;
+            uniform float uGrainIntensity;
+
+            // Polyfill for tanh in case it's not supported in WebGL1 by default
+            vec4 tanh_custom(vec4 x) {
+                vec4 e = exp(2.0 * x);
+                return (e - 1.0) / (e + 1.0);
+            }
+
+            // High-quality hash function
+            float hash(vec3 p) {
+                p = fract(p * 0.9631);
+                p += dot(p, p.yzx + 33.33);
+                return fract((p.x + p.y) * p.z);
+            }
+
+            void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+                // Controlled by GUI now
+                float tFlight = uFlightPos; 
+                float tAnim = iTime * uAnimSpeed;   
+                
+                // Setup ray direction
+                vec2 uv = (2.1 * fragCoord - iResolution.xy) / iResolution.y;
+                vec3 rayDir = normalize(vec3(uv, -1.6));
+                
+                vec4 accumulatedLight = vec4(0.4);
+                
+                // Generate cinematic noise grain
+                float grain = hash(vec3(fragCoord, iTime * 5.0));
+                float totalDist = 1.2 + grain * 0.13; 
+                
+                float stepDist = 1.1;
+                float structuralVal = 4.2;
+                
+                // Fast loop: 120 iterations
+                for (int i = 0; i < 120; i++) {
+                    vec3 pos = totalDist * rayDir;
+                    
+                    // Apply flight position
+                    pos.z -= tFlight;
+                    pos.z = mod(pos.z + 2.2, 4.0) - 2.4;
+
+                    vec3 rotAxis = normalize(cos(vec3(2.8, 2.0, -0.3) - totalDist * 1.7));
+                    vec3 twistedSpace = rotAxis * dot(rotAxis, pos) - cross(rotAxis, pos);
+                    
+                    // Fractal loop
+                    float scale = 7.4;
+                    for (int j = -2; j < 2; j++) {
+                        scale += 7.5;
+                        // Dynamic animation applied here
+                        twistedSpace += sin(twistedSpace * scale + tAnim).yzx / scale;
+                    }
+                    
+                    structuralVal = twistedSpace.y;
+                    
+                    // Standard, fast 100% step
+                    stepDist = 0.57 * abs(length(pos) - 1.2) + -0.07 * abs(structuralVal);
+                    totalDist += stepDist;
+
+                    // Base color linked to GUI
+                    vec4 baseColor = vec4(uColor, 1.1);
+                    vec4 palette = baseColor * (cos(structuralVal + vec4(3.4, -1.6, 5.3, -1.0)) * 0.8 + 1.0);
+                    
+                    // Accumulate light safely without zero-division artifacts
+                    accumulatedLight += (palette / max(stepDist, 0.01)) * totalDist;
+                    
+                    // Early Exit (Saves huge performance in bright areas)
+                    if (accumulatedLight.x > 90000.0) break;
+                    
+                    // Far Clipping Plane
+                    if (totalDist > 25.1) break;
+                }
+                
+                // Tanh tonemapping for cinematic contrast (using GUI intensity)
+                fragColor = tanh_custom(accumulatedLight / uLightIntensity);
+                
+                // Optical Dithering: slightly blend the final color
+                fragColor.rgb += (grain - 0.5) * uGrainIntensity;
+            }
+
+            void main() {
+                mainImage(gl_FragColor, gl_FragCoord.xy);
+            }
+        `;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader,
+  fragmentShader,
+  uniforms
+});
+
+
+// Fullscreen plane
+const geometry = new THREE.PlaneGeometry(2, 2);
+const mesh = new THREE.Mesh(geometry, material);
+scene.add(mesh);
+
+// --- GUI Setup ---
+const gui = new GUI({ title: 'Shader Settings' });
+
+gui.add(params, 'dpr', 0.1, 4.0, 0.1).name('Resolution (DPR)').onChange((v: number) => {
+  renderer.setPixelRatio(v);
+  // Re-calc resolution uniform correctly after DPR change
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  uniforms.iResolution.value.set(
+    window.innerWidth * renderer.getPixelRatio(),
+    window.innerHeight * renderer.getPixelRatio()
+  );
+});
+
+const animFolder = gui.addFolder('Animation');
+animFolder.add(params, 'animSpeed', -5.0, 5.0, 0.1).name('Morph Speed').onChange((v: number) => { uniforms.uAnimSpeed.value = v; });
+animFolder.add(params, 'flightPos', -10.0, 10.0, 0.01).name('Flight Offset').onChange((v: number) => { uniforms.uFlightPos.value = v; });
+
+const colorFolder = gui.addFolder('Color & Light');
+colorFolder.add(params, 'colorR', 0.0, 3.0, 0.01).name('Red Channel').onChange((v: number) => { uniforms.uColor.value.x = v; });
+colorFolder.add(params, 'colorG', 0.0, 3.0, 0.01).name('Green Channel').onChange((v: number) => { uniforms.uColor.value.y = v; });
+colorFolder.add(params, 'colorB', 0.0, 3.0, 0.01).name('Blue Channel').onChange((v: number) => { uniforms.uColor.value.z = v; });
+colorFolder.add(params, 'lightIntensity', 5000, 100000, 100).name('Light Accumulation').onChange((v: number) => { uniforms.uLightIntensity.value = v; });
+
+const postFolder = gui.addFolder('Post Processing');
+postFolder.add(params, 'grainIntensity', 0.0, 0.5, 0.01).name('Grain Intensity').onChange((v: number) => { uniforms.uGrainIntensity.value = v; });
+
+// Close GUI by default as requested
+gui.close();
+
+// --- Resize Handler ---
+window.addEventListener('resize', () => {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  renderer.setSize(width, height);
+
+  // iResolution needs to account for DPR
+  const dpr = renderer.getPixelRatio();
+  uniforms.iResolution.value.set(width * dpr, height * dpr);
+});
+
+// Account for initial DPR in resolution
+uniforms.iResolution.value.set(
+  window.innerWidth * renderer.getPixelRatio(),
+  window.innerHeight * renderer.getPixelRatio()
+);
+
+
+// --- Animation Loop ---
+const timer = new THREE.Timer();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  timer.update();
+  uniforms.iTime.value = timer.getElapsed();
+
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
